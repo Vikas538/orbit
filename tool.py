@@ -1,14 +1,9 @@
-import time
-import json
-from typing import List, Dict
-from google import genai
-from google.genai import types
+import json 
 from playwright.sync_api import sync_playwright
-import os
+import time
+from typing import List, Dict
+ 
 
-print("===========================>",os.getenv('GEMINI_API_KEY'))
-GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
-# --- BROWSER ENGINE ---
 browser_context = {"browser": None, "page": None, "playwright": None}
 
 def get_browser(target_url):
@@ -36,7 +31,6 @@ def get_browser(target_url):
         browser_context["page"] = page
     return browser_context["page"]
 
-# --- THE TOOLS ---
 
 def fetch_cleaned_dom(url: str) -> str:
     """Navigates to a URL and returns a simplified version of the DOM for the AI to read."""
@@ -119,46 +113,3 @@ def run_browser_actions(actions: List[Dict[str, str]]) -> str:
             execution_log.append(msg)
             
     return json.dumps(execution_log)
-
-# --- AI SETUP ---
-client = genai.Client(api_key=GEMINI_API_KEY)
-
-chat = client.chats.create(
-    model="gemini-2.0-flash",
-    config=types.GenerateContentConfig(
-        tools=[fetch_cleaned_dom, run_browser_actions],
-        automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=False)
-    )
-)
-
-# --- EXECUTION ---
-# Be very specific in the prompt to avoid hallucinations
-prompt  = """
-You are a browser automation agent. You have access to fetch_cleaned_dom and run_browser_actions.
-
-The app is at https://p99soft.keka.com/#/home/dashboard
-
-User request: "Update my timesheet for today with 8 hours and comment Development work"
-
-Follow this loop:
-1. THINK: What do I need to do?
-2. ACT: Call a tool
-3. OBSERVE: Look at the result
-4. THINK: Did it work? What's next?
-5. Repeat until done
-
-Never assume the DOM — always fetch before acting.
-Never click something you haven't seen in the DOM.
-"""
-
-
-try:
-    response = chat.send_message(prompt)
-    print("\n--- AI Result ---")
-    print(response.text)
-    time.sleep(10) # Time to see the final state
-finally:
-    if browser_context["browser"]:
-        browser_context["browser"].close()
-        browser_context["playwright"].stop()
-
