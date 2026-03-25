@@ -1,7 +1,8 @@
 #!/bin/bash
 set -e
 
-IMAGE_NAME="jaas_agent_v1"
+PYTHON_VERSION="3.11"
+IMAGE_NAME="jaas-python-${PYTHON_VERSION}-v1"
 IMAGE_TAG="latest"
 FULL_TAG="$IMAGE_NAME:$IMAGE_TAG"
 

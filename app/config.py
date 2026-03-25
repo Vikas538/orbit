@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     DATABASE_NAME: str
     DATABASE_URI: str = ""
 
-    AGENT_IMAGE: str = "jaas_agent_v1:latest"
+    AGENT_IMAGE: str = "jaas-python-3.11-v1:latest"
 
     model_config = SettingsConfigDict(
         env_file=".env",

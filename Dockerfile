@@ -1,30 +1,32 @@
-FROM node:22-slim
+FROM python:3.11-slim
 
-RUN apt-get update && apt-get install -y \
-    git \
-    curl \
-    gnupg \
-    apt-transport-https \
-    python3 \
-    python3-pip \
-    python3-venv \
-    ca-certificates \
+# python3, pip, venv all come free with the base image
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git \
+        curl \
+        ca-certificates \
+        gnupg \
+    # GitHub CLI
+    && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+        | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+        | tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
+    && apt-get update && apt-get install -y --no-install-recommends gh \
+    # Node.js (needed for gemini + claude CLIs)
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    # Purge tools only needed for keyring setup
+    && apt-get purge -y gnupg \
+    && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
-# Install GitHub CLI
-RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-        | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && \
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
-        | tee /etc/apt/sources.list.d/github-cli.list > /dev/null && \
-    apt-get update && apt-get install -y gh && \
-    rm -rf /var/lib/apt/lists/*
+# Install AI CLIs and clean npm cache in the same layer
+RUN npm install -g --no-fund --no-audit @google/gemini-cli @anthropic-ai/claude-code \
+    && npm cache clean --force
 
-# Install AI CLIs
-RUN npm install -g @google/gemini-cli @anthropic-ai/claude-code
-
-# SSH config — trust github.com host so git clone doesn't prompt
-RUN mkdir -p /root/.ssh && \
-    ssh-keyscan github.com >> /root/.ssh/known_hosts
+# Pre-seed GitHub host key
+RUN mkdir -p /root/.ssh \
+    && ssh-keyscan github.com >> /root/.ssh/known_hosts
 
 WORKDIR /workspace
 
@@ -33,5 +35,4 @@ COPY guardrails/GEMINI.md /guardrails/GEMINI.md
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# API keys and SSH keys are injected at runtime — nothing sensitive here
 ENTRYPOINT ["/entrypoint.sh"]
