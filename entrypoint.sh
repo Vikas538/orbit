@@ -1,22 +1,27 @@
 #!/bin/bash
 set -e
 
-echo "[ORBIT] ── Cloning repo: $REPO_NAME ────────────────────"
-if [ -z "$REPO_NAME" ]; then
-    echo "[ORBIT] ERROR: REPO_NAME is not set"
+echo "[ORBIT] ── Container live ───────────────────────────────"
+echo "[ORBIT] Ticket:  $TICKET_ID"
+echo "[ORBIT] Repo:    $REPO_URL"
+echo "[ORBIT] Model:   $MODEL_USED"
+
+# ── Validate required env vars ───────────────────────────────
+if [ -z "$REPO_URL" ]; then
+    echo "[ORBIT] ERROR: REPO_URL is not set"
     exit 1
 fi
 
-echo "$GITHUB_TOKEN" | gh auth login --with-token
-REPO_URL="https://github.com/$REPO_NAME"
-WORKSPACE="/workspace/$(basename "$REPO_NAME")"
-gh repo clone "$REPO_URL" "$WORKSPACE"
-cd "$WORKSPACE"
+# ── Clone repo via SSH (keys mounted at runtime via ~/.ssh) ──
+echo "[ORBIT] ── Cloning $REPO_URL ───────────────────────────"
+REPO_DIR="/workspace/$(basename "$REPO_URL" .git)"
+git clone "$REPO_URL" "$REPO_DIR"
+cd "$REPO_DIR"
+echo "[ORBIT] Cloned into $REPO_DIR"
 
-echo "[ORBIT] ── Injecting guardrails ────────────────────────"
+# ── Inject guardrails ─────────────────────────────────────────
 case "$MODEL_USED" in
     claude)
-        mkdir -p .claude
         cp /guardrails/CLAUDE.md CLAUDE.md
         echo "[ORBIT] Guardrails → CLAUDE.md"
         ;;
@@ -26,50 +31,43 @@ case "$MODEL_USED" in
         ;;
 esac
 
-echo "[ORBIT] ── Reading README ──────────────────────────────"
+# ── Read README ───────────────────────────────────────────────
 README=""
 for f in README.md readme.md README.txt README; do
     if [ -f "$f" ]; then
         README=$(cat "$f")
-        echo "[ORBIT] Found $f"
+        echo "[ORBIT] README found: $f"
         break
     fi
 done
 
+# ── Setup environment ─────────────────────────────────────────
 echo "[ORBIT] ── Setting up environment ──────────────────────"
 if [ -f "package.json" ]; then
-    echo "[ORBIT] Detected Node project → npm install"
+    echo "[ORBIT] Node project → npm install"
     npm install --silent
 elif [ -f "requirements.txt" ]; then
-    echo "[ORBIT] Detected Python project → pip install"
+    echo "[ORBIT] Python project → pip install"
     python3 -m venv .venv && .venv/bin/pip install -r requirements.txt -q
 elif [ -f "pyproject.toml" ]; then
-    echo "[ORBIT] Detected pyproject.toml → pip install"
+    echo "[ORBIT] pyproject.toml → pip install"
     python3 -m venv .venv && .venv/bin/pip install . -q
-elif [ -f "Gemfile" ]; then
-    echo "[ORBIT] Detected Ruby project → bundle install"
-    bundle install --quiet
 elif [ -f "go.mod" ]; then
-    echo "[ORBIT] Detected Go project → go mod download"
+    echo "[ORBIT] Go project → go mod download"
     go mod download
 fi
 
+# ── Run agent ─────────────────────────────────────────────────
 echo "[ORBIT] ── Running agent ($MODEL_USED) ─────────────────"
 FULL_PROMPT="Project README:\n$README\n\n---\n\nTask:\n$TASK_PROMPT"
 
 case "$MODEL_USED" in
     claude)
-        claude \
-            --print \
-            --dangerously-skip-permissions \
-            "$FULL_PROMPT"
+        claude --print --dangerously-skip-permissions "$FULL_PROMPT"
         ;;
     gemini | *)
-        gemini \
-            --prompt "$FULL_PROMPT" \
-            --include-directories ./ \
-            --approval-mode yolo
+        gemini --prompt "$FULL_PROMPT" --include-directories ./ --approval-mode yolo
         ;;
 esac
 
-echo "[ORBIT] ── Done: $TICKET_ID ($REPO_URL) ────────────────"
+echo "[ORBIT] ── Done: $TICKET_ID ─────────────────────────────"

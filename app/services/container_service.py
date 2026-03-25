@@ -47,10 +47,10 @@ def _ensure_image():
     try:
         client.images.get(settings.AGENT_IMAGE)
     except ImageNotFound:
-        project_root = str(pathlib.Path(__file__).resolve().parents[2])
-        print(f"[CONTAINER] Building {settings.AGENT_IMAGE}...")
-        client.images.build(path=project_root, tag=settings.AGENT_IMAGE, rm=True)
-        print(f"[CONTAINER] Build complete")
+        raise RuntimeError(
+            f"Image '{settings.AGENT_IMAGE}' not found locally. "
+            f"Build it first: docker build -f Dockerfile . -t {settings.AGENT_IMAGE}"
+        )
 
 
 def spin_up(session: OrbitSessions) -> tuple[str, str]:
@@ -65,9 +65,13 @@ def spin_up(session: OrbitSessions) -> tuple[str, str]:
 
     # Start from keys already in the image (.env), then layer task-specific vars on top
     env = _load_env_file(_ENV_FILE)
+    repo_url = session.repo_name or ""
+    if repo_url and not repo_url.startswith("http") and not repo_url.startswith("git@"):
+        repo_url = f"https://github.com/{repo_url}"
+
     env.update({
         "TICKET_ID": session.ticket_id or "",
-        "REPO_NAME": session.repo_name or "",
+        "REPO_URL": repo_url,
         "MODEL_USED": session.model_used or "gemini",
         "TASK_PROMPT": task_prompt,
     })
