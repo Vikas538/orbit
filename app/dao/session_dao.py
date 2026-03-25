@@ -22,5 +22,19 @@ class SessionDAO:
             await session.refresh(record)
             return record
 
+    async def update(self, session_id: str, **kwargs) -> OrbitSessions | None:
+        async with db.get_async_session() as session:
+            result = await session.execute(
+                select(OrbitSessions).where(OrbitSessions.session_id == session_id)
+            )
+            record = result.scalar_one_or_none()
+            if not record:
+                return None
+            for key, value in kwargs.items():
+                setattr(record, key, value)
+            await session.commit()
+            await session.refresh(record)
+            return record
+
 
 session_dao = SessionDAO()

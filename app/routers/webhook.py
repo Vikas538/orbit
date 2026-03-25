@@ -3,6 +3,7 @@ from datetime import datetime
 from fastapi import APIRouter, Request
 
 from app.dao.session_dao import session_dao
+from app.services import container_service
 from main import read_json, write_json
 
 router = APIRouter(tags=["webhook"])
@@ -66,7 +67,7 @@ async def handle_webhook(request: Request):
 
     existing = await session_dao.get_by_ticket_id(issue_key)
     if not existing:
-        await session_dao.create(
+        record = await session_dao.create(
             ticket_id=issue_key,
             ticket_details=fields,
             model_used=model_name,
@@ -74,6 +75,15 @@ async def handle_webhook(request: Request):
             status="PENDING",
         )
         print(f"[DB] Created session record for {issue_key}")
+
+        container_name, container_id = container_service.spin_up(record)
+        await session_dao.update(
+            record.session_id,
+            container_name=container_name,
+            container_id=container_id,
+            status="IN_PROGRESS",
+        )
+        print(f"[CONTAINER] {container_name} ({container_id[:12]}) running")
 
     return {
         "status": "triggered",

@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     DATABASE_NAME: str
     DATABASE_URI: str = ""
 
+    AGENT_IMAGE: str = "your-private-ecr-repo/ai-cli-image:latest"
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

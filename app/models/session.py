@@ -29,7 +29,7 @@ class OrbitTicketStatus(str, Enum):
 
 
 class OrbitSessions(Base):
-    __tablename__ = "orbit_session"
+    __tablename__ = "orbit_sessions"
 
     session_id = Column(String(32), primary_key=True, unique=True, default=cuid)
     ticket_id = Column(String(100), nullable=False)
@@ -39,6 +39,8 @@ class OrbitSessions(Base):
     file_changes = Column(ARRAY(Text), nullable=True)
     status = Column(String, nullable=True)
     function_changes = Column(ARRAY(Text), nullable=True)
+    container_name = Column(String, nullable=True)
+    container_id = Column(String, nullable=True)
 
 
     def to_dict(self):
@@ -58,6 +60,8 @@ class OrbitSessions(Base):
             "file_changes": self.file_changes,
             "status": self.status,
             "function_changes": self.function_changes,
+            "container_name": self.container_name,
+            "container_id": self.container_id,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
