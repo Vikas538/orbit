@@ -153,14 +153,14 @@ scheduler = AsyncIOScheduler()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_files()
-    scheduler.add_job(watcher_job, "interval", seconds=POLL_INTERVAL_SECS)
+    # scheduler.add_job(watcher_job, "interval", seconds=POLL_INTERVAL_SECS)
     scheduler.start()
     print(f"[SCHEDULER] Watcher started — polling every {POLL_INTERVAL_SECS}s")
     yield
     scheduler.shutdown()
     print("[SCHEDULER] Watcher stopped")
 
-app = FastAPI(lifespan=lifespan)
+app = FastAPI()
 
 # --- WEBHOOK ENDPOINT ---
 
@@ -208,6 +208,38 @@ async def health():
         "ongoing": get_ongoing(),
         "done": len(read_json(DONE_FILE))
     }
+
+@app.post("/webhook")
+async def handle_webhook(request: Request):
+    payload = await request.json()
+
+
+    assignee = payload.get("issue", {}).get("fields", {}).get("assignee")
+    fields = payload["issue"]["fields"]
+
+
+    if not assignee:
+        print("==================>")
+        return {"status": "ignored - no assignee"}
+
+
+    issue_key = payload["issue"]["key"]
+    summary = payload["issue"]["fields"].get("summary", "")
+    description = payload["issue"]["fields"].get("description")
+    print("--------------------------------?",payload["issue"]["fields"])
+    model_name = payload["issue"]["fields"].get("customfield_10071")
+    github_repo_name = payload["issue"]["fields"].get("customfield_10104")
+
+    print(f"[TRIGGER] Issue {issue_key}: {summary}")
+    print(f"[DESCRIPTION] {description}")
+
+    return {
+        "status": "triggered",
+        "issue_key": issue_key,
+        "summary": summary,
+        "description": description
+    }
+
 
 # --- RUN ---
 # uvicorn main:app --reload
