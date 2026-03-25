@@ -24,9 +24,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN npm install -g --no-fund --no-audit @google/gemini-cli @anthropic-ai/claude-code \
     && npm cache clean --force
 
-# Pre-seed GitHub host key
-RUN mkdir -p /root/.ssh \
-    && ssh-keyscan github.com >> /root/.ssh/known_hosts
+
 
 WORKDIR /workspace
 
