@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from contextlib import asynccontextmanager
 import subprocess
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # --- CONFIG ---
@@ -160,45 +160,11 @@ async def lifespan(app: FastAPI):
     scheduler.shutdown()
     print("[SCHEDULER] Watcher stopped")
 
-app = FastAPI()
+app = FastAPI(lifespan=lifespan)
 
-# --- WEBHOOK ENDPOINT ---
+from app.routers import register_routes
+register_routes(app)
 
-@app.post("/jira-webhook")
-async def jira_webhook(request: Request):
-    payload = await request.json()
-
-    event = payload.get("webhookEvent", "")
-    if event not in ["jira:issue_created", "jira:issue_updated"]:
-        return {"status": "ignored"}
-
-    issue = payload.get("issue", {})
-    fields = issue.get("fields", {})
-    assignee = fields.get("assignee")
-    status = fields.get("status", {}).get("name", "")
-
-    if not assignee or status not in ["To Do", "Open"]:
-        return {"status": "ignored"}
-
-    task = {
-        "task_id": issue.get("key"),
-        "title": fields.get("summary", ""),
-        "description": fields.get("description", "") or "",
-        "status": status,
-        "assignee": assignee.get("displayName", ""),
-        "received_at": datetime.utcnow().isoformat()
-    }
-
-    pending = read_json(PENDING_FILE)
-    existing_ids = [t["task_id"] for t in pending]
-
-    if task["task_id"] not in existing_ids:
-        pending.append(task)
-        write_json(PENDING_FILE, pending)
-        print(f"[WEBHOOK] New task added: {task['task_id']} - {task['title']}")
-        return {"status": "added", "task_id": task["task_id"]}
-
-    return {"status": "duplicate"}
 
 @app.get("/health")
 async def health():
@@ -206,38 +172,7 @@ async def health():
         "status": "ok",
         "pending": len(read_json(PENDING_FILE)),
         "ongoing": get_ongoing(),
-        "done": len(read_json(DONE_FILE))
-    }
-
-@app.post("/webhook")
-async def handle_webhook(request: Request):
-    payload = await request.json()
-
-
-    assignee = payload.get("issue", {}).get("fields", {}).get("assignee")
-    fields = payload["issue"]["fields"]
-
-
-    if not assignee:
-        print("==================>")
-        return {"status": "ignored - no assignee"}
-
-
-    issue_key = payload["issue"]["key"]
-    summary = payload["issue"]["fields"].get("summary", "")
-    description = payload["issue"]["fields"].get("description")
-    print("--------------------------------?",payload["issue"]["fields"])
-    model_name = payload["issue"]["fields"].get("customfield_10071")
-    github_repo_name = payload["issue"]["fields"].get("customfield_10104")
-
-    print(f"[TRIGGER] Issue {issue_key}: {summary}")
-    print(f"[DESCRIPTION] {description}")
-
-    return {
-        "status": "triggered",
-        "issue_key": issue_key,
-        "summary": summary,
-        "description": description
+        "done": len(read_json(DONE_FILE)),
     }
 
 
