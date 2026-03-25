@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     DATABASE_NAME: str
     DATABASE_URI: str = ""
 
-    AGENT_IMAGE: str = "your-private-ecr-repo/ai-cli-image:latest"
+    AGENT_IMAGE: str = "jaas_agent_v1:latest"
 
     model_config = SettingsConfigDict(
         env_file=".env",

@@ -2,7 +2,7 @@ import os
 import pathlib
 
 import docker
-from docker.errors import APIError
+from docker.errors import APIError, ImageNotFound
 
 from app.config import settings
 from app.models.session import OrbitSessions
@@ -43,12 +43,23 @@ def _load_env_file(path: str) -> dict:
     return env
 
 
+def _ensure_image():
+    try:
+        client.images.get(settings.AGENT_IMAGE)
+    except ImageNotFound:
+        project_root = str(pathlib.Path(__file__).resolve().parents[2])
+        print(f"[CONTAINER] Building {settings.AGENT_IMAGE}...")
+        client.images.build(path=project_root, tag=settings.AGENT_IMAGE, rm=True)
+        print(f"[CONTAINER] Build complete")
+
+
 def spin_up(session: OrbitSessions) -> tuple[str, str]:
     """
     Spin up an isolated agent container from the shared AI-tools image.
     The image already has all CLI tools and API keys baked in via env_file.
     Returns (container_name, container_id).
     """
+    _ensure_image()
     container_name = session.ticket_id  # e.g. "PROJ-42"
     task_prompt = _build_task_prompt(session)
 

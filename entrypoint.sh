@@ -1,29 +1,30 @@
 #!/bin/bash
 set -e
 
-echo "[ORBIT] ── Installing CLIs ──────────────────────────────"
-npm install -g @google/gemini-cli @anthropic-ai/claude-code --silent
-
-# GitHub CLI
-curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-    | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
-    | tee /etc/apt/sources.list.d/github-cli.list > /dev/null
-apt-get update -qq && apt-get install -y gh -qq
-echo "[ORBIT] GitHub CLI $(gh --version | head -1)"
-
 echo "[ORBIT] ── Cloning repo: $REPO_NAME ────────────────────"
 if [ -z "$REPO_NAME" ]; then
     echo "[ORBIT] ERROR: REPO_NAME is not set"
     exit 1
 fi
 
-# Authenticate gh CLI and clone using repo_name as the full GitHub URL
 echo "$GITHUB_TOKEN" | gh auth login --with-token
 REPO_URL="https://github.com/$REPO_NAME"
 WORKSPACE="/workspace/$(basename "$REPO_NAME")"
 gh repo clone "$REPO_URL" "$WORKSPACE"
 cd "$WORKSPACE"
+
+echo "[ORBIT] ── Injecting guardrails ────────────────────────"
+case "$MODEL_USED" in
+    claude)
+        mkdir -p .claude
+        cp /guardrails/CLAUDE.md CLAUDE.md
+        echo "[ORBIT] Guardrails → CLAUDE.md"
+        ;;
+    gemini | *)
+        cp /guardrails/GEMINI.md GEMINI.md
+        echo "[ORBIT] Guardrails → GEMINI.md"
+        ;;
+esac
 
 echo "[ORBIT] ── Reading README ──────────────────────────────"
 README=""
