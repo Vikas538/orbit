@@ -7,6 +7,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         gnupg \
         openssh-client \
+        grep \
+        procps \
+        psmisc \
+        net-tools \
+        iputils-ping \
+        vim \
+        less \
+        jq \
     # GitHub CLI
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
         | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \

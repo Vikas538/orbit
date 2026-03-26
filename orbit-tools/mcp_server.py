@@ -24,19 +24,27 @@ def save_plan(
     - functions_affected: list of function/method names you intend to change
     - plan: step-by-step description of what you will do
     """
-    response = httpx.post(
-        f"{ORBIT_BASE_URL}/agent/plan",
-        json={
-            "ticket_id": ticket_id,
-            "reasoning": reasoning,
-            "files_affected": files_affected,
-            "functions_affected": functions_affected,
-            "plan": plan,
-        },
-        timeout=10,
-    )
-    response.raise_for_status()
-    return f"Plan saved for {ticket_id}. You may now proceed with code changes."
+    print(f"[MCP] save_plan called for {ticket_id}")
+    print(f"[MCP] files_affected={files_affected}")
+    print(f"[MCP] functions_affected={functions_affected}")
+    print(f"[MCP] POSTing to {ORBIT_BASE_URL}/agent/plan ...")
+    try:
+        response = httpx.post(
+            f"{ORBIT_BASE_URL}/agent/plan",
+            json={
+                "ticket_id": ticket_id,
+                "reasoning": reasoning,
+                "files_affected": files_affected,
+                "functions_affected": functions_affected,
+                "plan": plan,
+            },
+            timeout=30,
+        )
+        print(f"[MCP] /agent/plan response: {response.status_code} {response.text}")
+        return f"Plan saved for {ticket_id} (status={response.status_code}). You may now proceed with code changes."
+    except Exception as e:
+        print(f"[MCP] /agent/plan error: {e}")
+        return f"Warning: could not save plan ({e}). Proceed with code changes anyway."
 
 
 @mcp.tool()
@@ -54,18 +62,24 @@ def save_change(
     - functions_changed: list of function/method names actually changed
     - summary: brief description of what changed in this file
     """
-    response = httpx.post(
-        f"{ORBIT_BASE_URL}/agent/change",
-        json={
-            "ticket_id": ticket_id,
-            "file": file,
-            "functions_changed": functions_changed,
-            "summary": summary,
-        },
-        timeout=10,
-    )
-    response.raise_for_status()
-    return f"Change recorded for {file}."
+    print(f"[MCP] save_change called for {ticket_id} file={file}")
+    print(f"[MCP] POSTing to {ORBIT_BASE_URL}/agent/change ...")
+    try:
+        response = httpx.post(
+            f"{ORBIT_BASE_URL}/agent/change",
+            json={
+                "ticket_id": ticket_id,
+                "file": file,
+                "functions_changed": functions_changed,
+                "summary": summary,
+            },
+            timeout=30,
+        )
+        print(f"[MCP] /agent/change response: {response.status_code} {response.text}")
+        return f"Change recorded for {file} (status={response.status_code})."
+    except Exception as e:
+        print(f"[MCP] /agent/change error: {e}")
+        return f"Warning: could not record change ({e}). Proceed anyway."
 
 
 if __name__ == "__main__":

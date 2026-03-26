@@ -12,6 +12,8 @@ if [ -z "$REPO_URL" ]; then
     exit 1
 fi
 
+ORBIT_BASE_URL="${ORBIT_BASE_URL:-https://sheep-amazed-oyster.ngrok-free.app}"
+
 # ── Clone repo via SSH (keys mounted at runtime via ~/.ssh) ──
 echo "[ORBIT] ── Cloning $REPO_URL ───────────────────────────"
 REPO_DIR="/workspace/$(basename "$REPO_URL" .git)"
@@ -63,7 +65,7 @@ FULL_PROMPT="Project README:\n$README\n\n---\n\nTask:\n$TASK_PROMPT once the cha
 
 case "$MODEL_USED" in
     claude)
-        # Write MCP config so Claude can call the orbit-tools server
+        # Claude uses --mcp-config flag
         cat > /tmp/mcp_config.json <<'MCPEOF'
 {
   "mcpServers": {
@@ -79,8 +81,28 @@ MCPEOF
                "$FULL_PROMPT"
         ;;
     gemini | *)
-        gemini --prompt "$FULL_PROMPT" --include-directories ./ --approval-mode yolo
+        # Gemini reads MCP config from ~/.gemini/settings.json
+        mkdir -p /home/orbit/.gemini
+        cat > /home/orbit/.gemini/settings.json <<'GEMINIEOF'
+{
+  "mcpServers": {
+    "orbit-tools": {
+      "command": "python3",
+      "args": ["/orbit-tools/mcp_server.py"]
+    }
+  }
+}
+GEMINIEOF
+        gemini --prompt "$FULL_PROMPT" \
+               --include-directories ./ \
+               --approval-mode yolo
         ;;
 esac
+
+# ── Mark session as COMPLETED ─────────────────────────────────
+echo "[ORBIT] ── Marking $TICKET_ID as COMPLETED ──────────────"
+curl -s -X POST "${ORBIT_BASE_URL}/agent/complete" \
+     -H "Content-Type: application/json" \
+     -d "{\"ticket_id\": \"$TICKET_ID\"}" || echo "[ORBIT] WARNING: could not update status to COMPLETED"
 
 echo "[ORBIT] ── Done: $TICKET_ID ─────────────────────────────"

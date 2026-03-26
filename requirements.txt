@@ -6,3 +6,4 @@ apscheduler
 pydantic-settings
 cuid
 chromadb
+fastmcp

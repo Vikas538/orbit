@@ -98,34 +98,40 @@ async def handle_webhook(request: Request):
 
 @router.post("/agent/plan")
 async def save_agent_plan(request: Request):
+    print(f"[API] POST /agent/plan hit from {request.client.host}")
     payload = await request.json()
+    print(f"[API] /agent/plan payload: {payload}")
 
     ticket_id = payload.get("ticket_id")
     if not ticket_id:
         return {"status": "error", "detail": "ticket_id required"}
 
     record = await session_dao.get_by_ticket_id(ticket_id)
-    if not record:
-        return {"status": "error", "detail": f"No session found for {ticket_id}"}
 
     files_affected = payload.get("files_affected", [])
     functions_affected = payload.get("functions_affected", [])
     reasoning = payload.get("reasoning", "")
     plan = payload.get("plan", "")
 
-    # Postgres — file and function names only
-    await session_dao.update(
-        record.session_id,
-        file_changes=files_affected,
-        function_changes=functions_affected,
-        status="PLANNING_DONE",
-    )
+    # Postgres — file and function names only (if session exists)
+    if record:
+        await session_dao.update(
+            record.session_id,
+            file_changes=files_affected,
+            function_changes=functions_affected,
+            status="PLANNING_DONE",
+        )
+    else:
+        print(f"[PLAN] No session found for {ticket_id} — skipping postgres update")
 
     # ChromaDB — plan + reasoning as document, rich metadata
+    session_id = record.session_id if record else "unknown"
+    container_id = (record.container_id or "") if record else "unknown"
+
     print(f"[CHROMA] Saving plan for {ticket_id} ...")
-    print(f"[CHROMA]   session_id       = {record.session_id}")
-    print(f"[CHROMA]   container_id     = {record.container_id or '(none)'}")
-    print(f"[CHROMA]   files_affected   = {files_affected}")
+    print(f"[CHROMA]   session_id         = {session_id}")
+    print(f"[CHROMA]   container_id       = {container_id}")
+    print(f"[CHROMA]   files_affected     = {files_affected}")
     print(f"[CHROMA]   functions_affected = {functions_affected}")
     print(f"[CHROMA]   reasoning (first 200 chars) = {reasoning[:200]}")
     print(f"[CHROMA]   plan (first 200 chars)      = {plan[:200]}")
@@ -136,8 +142,8 @@ async def save_agent_plan(request: Request):
         documents=[f"{reasoning}\n\n{plan}"],
         metadatas=[{
             "ticket_id": ticket_id,
-            "session_id": record.session_id,
-            "container_id": record.container_id or "",
+            "session_id": session_id,
+            "container_id": container_id,
             "files_affected": ", ".join(files_affected),
             "functions_affected": ", ".join(functions_affected),
         }],
@@ -145,13 +151,31 @@ async def save_agent_plan(request: Request):
 
     count = collection.count()
     print(f"[CHROMA] Upsert done. Collection 'orbit_plans' now has {count} document(s).")
-    print(f"[PLAN] {ticket_id} → postgres+chroma | files={files_affected} fns={functions_affected}")
+    print(f"[PLAN] {ticket_id} → chroma saved | files={files_affected} fns={functions_affected}")
+    return {"status": "ok", "ticket_id": ticket_id}
+
+
+@router.post("/agent/complete")
+async def complete_agent_session(request: Request):
+    payload = await request.json()
+    ticket_id = payload.get("ticket_id")
+    if not ticket_id:
+        return {"status": "error", "detail": "ticket_id required"}
+
+    record = await session_dao.get_by_ticket_id(ticket_id)
+    if not record:
+        return {"status": "error", "detail": f"No session found for {ticket_id}"}
+
+    await session_dao.update(record.session_id, status="COMPLETED")
+    print(f"[COMPLETE] {ticket_id} → status=COMPLETED")
     return {"status": "ok", "ticket_id": ticket_id}
 
 
 @router.post("/agent/change")
 async def save_agent_change(request: Request):
+    print(f"[API] POST /agent/change hit from {request.client.host}")
     payload = await request.json()
+    print(f"[API] /agent/change payload: {payload}")
 
     ticket_id = payload.get("ticket_id")
     if not ticket_id:
