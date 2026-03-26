@@ -13,6 +13,11 @@ class Settings(BaseSettings):
 
     AGENT_IMAGE: str = "jaas-python-3.11-v1:latest"
 
+    CHROMA_HOST: str = "localhost"
+    CHROMA_PORT: int = 8001
+    CHROMA_TOKEN: str = "orbit-chroma-secret"
+    CHROMA_COLLECTION: str = "orbit_plans"
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

@@ -59,11 +59,24 @@ fi
 
 # ── Run agent ─────────────────────────────────────────────────
 echo "[ORBIT] ── Running agent ($MODEL_USED) ─────────────────"
-FULL_PROMPT="Project README:\n$README\n\n---\n\nTask:\n$TASK_PROMPT"
+FULL_PROMPT="Project README:\n$README\n\n---\n\nTask:\n$TASK_PROMPT once the changes are done push the chanes back to git create a new branach as ticket-id "
 
 case "$MODEL_USED" in
     claude)
-        claude --print --dangerously-skip-permissions "$FULL_PROMPT"
+        # Write MCP config so Claude can call the orbit-tools server
+        cat > /tmp/mcp_config.json <<'MCPEOF'
+{
+  "mcpServers": {
+    "orbit-tools": {
+      "command": "python3",
+      "args": ["/orbit-tools/mcp_server.py"]
+    }
+  }
+}
+MCPEOF
+        claude --print --dangerously-skip-permissions \
+               --mcp-config /tmp/mcp_config.json \
+               "$FULL_PROMPT"
         ;;
     gemini | *)
         gemini --prompt "$FULL_PROMPT" --include-directories ./ --approval-mode yolo

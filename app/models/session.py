@@ -37,8 +37,10 @@ class OrbitSessions(Base):
     model_used = Column(String(100), nullable=True)
     repo_name =Column(String(100), nullable=True)
     file_changes = Column(ARRAY(Text), nullable=True)
-    status = Column(String, nullable=True)
     function_changes = Column(ARRAY(Text), nullable=True)
+    plan = Column(Text, nullable=True)
+    reasoning = Column(Text, nullable=True)
+    status = Column(String, nullable=True)
     container_name = Column(String, nullable=True)
     container_id = Column(String, nullable=True)
 

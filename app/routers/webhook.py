@@ -2,6 +2,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Request
 
+from app.chroma import get_collection
 from app.dao.session_dao import session_dao
 from app.services import container_service
 from main import read_json, write_json
@@ -93,3 +94,88 @@ async def handle_webhook(request: Request):
         "model_name": model_name,
         "github_repo_name": github_repo_name,
     }
+
+
+@router.post("/agent/plan")
+async def save_agent_plan(request: Request):
+    payload = await request.json()
+
+    ticket_id = payload.get("ticket_id")
+    if not ticket_id:
+        return {"status": "error", "detail": "ticket_id required"}
+
+    record = await session_dao.get_by_ticket_id(ticket_id)
+    if not record:
+        return {"status": "error", "detail": f"No session found for {ticket_id}"}
+
+    files_affected = payload.get("files_affected", [])
+    functions_affected = payload.get("functions_affected", [])
+    reasoning = payload.get("reasoning", "")
+    plan = payload.get("plan", "")
+
+    # Postgres — file and function names only
+    await session_dao.update(
+        record.session_id,
+        file_changes=files_affected,
+        function_changes=functions_affected,
+        status="PLANNING_DONE",
+    )
+
+    # ChromaDB — plan + reasoning as document, rich metadata
+    print(f"[CHROMA] Saving plan for {ticket_id} ...")
+    print(f"[CHROMA]   session_id       = {record.session_id}")
+    print(f"[CHROMA]   container_id     = {record.container_id or '(none)'}")
+    print(f"[CHROMA]   files_affected   = {files_affected}")
+    print(f"[CHROMA]   functions_affected = {functions_affected}")
+    print(f"[CHROMA]   reasoning (first 200 chars) = {reasoning[:200]}")
+    print(f"[CHROMA]   plan (first 200 chars)      = {plan[:200]}")
+
+    collection = get_collection()
+    collection.upsert(
+        ids=[ticket_id],
+        documents=[f"{reasoning}\n\n{plan}"],
+        metadatas=[{
+            "ticket_id": ticket_id,
+            "session_id": record.session_id,
+            "container_id": record.container_id or "",
+            "files_affected": ", ".join(files_affected),
+            "functions_affected": ", ".join(functions_affected),
+        }],
+    )
+
+    count = collection.count()
+    print(f"[CHROMA] Upsert done. Collection 'orbit_plans' now has {count} document(s).")
+    print(f"[PLAN] {ticket_id} → postgres+chroma | files={files_affected} fns={functions_affected}")
+    return {"status": "ok", "ticket_id": ticket_id}
+
+
+@router.post("/agent/change")
+async def save_agent_change(request: Request):
+    payload = await request.json()
+
+    ticket_id = payload.get("ticket_id")
+    if not ticket_id:
+        return {"status": "error", "detail": "ticket_id required"}
+
+    record = await session_dao.get_by_ticket_id(ticket_id)
+    if not record:
+        return {"status": "error", "detail": f"No session found for {ticket_id}"}
+
+    existing_files = record.file_changes or []
+    existing_fns = record.function_changes or []
+
+    new_file = payload.get("file")
+    new_fns = payload.get("functions_changed", [])
+
+    updated_files = list(set(existing_files + ([new_file] if new_file else [])))
+    updated_fns = list(set(existing_fns + new_fns))
+
+    await session_dao.update(
+        record.session_id,
+        file_changes=updated_files,
+        function_changes=updated_fns,
+    )
+
+    print(f"[CHANGE] {ticket_id} → file={new_file} fns={new_fns}")
+    return {"status": "ok", "ticket_id": ticket_id, "file": new_file}
+

@@ -25,13 +25,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN npm install -g --no-fund --no-audit @google/gemini-cli @anthropic-ai/claude-code \
     && npm cache clean --force
 
+# Install orbit MCP tool dependencies
+RUN pip install --no-cache-dir mcp httpx
 
+RUN ssh-keyscan github.com >> /etc/ssh/ssh_known_hosts
+
+RUN useradd -m -u 1000 orbit
 
 WORKDIR /workspace
+RUN chown orbit:orbit /workspace
 
 COPY guardrails/CLAUDE.md /guardrails/CLAUDE.md
 COPY guardrails/GEMINI.md /guardrails/GEMINI.md
+COPY orbit-tools/mcp_server.py /orbit-tools/mcp_server.py
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+RUN chmod +x /entrypoint.sh && chmod +x /orbit-tools/mcp_server.py
+
+USER orbit
+
+RUN mkdir -p /home/orbit/.ssh && chmod 700 /home/orbit/.ssh
 
 ENTRYPOINT ["/entrypoint.sh"]

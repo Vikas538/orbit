@@ -85,7 +85,7 @@ def spin_up(session: OrbitSessions) -> tuple[str, str]:
             tty=True,
             environment=env,
             volumes={
-                _SSH_DIR: {"bind": "/root/.ssh", "mode": "ro"},
+                _SSH_DIR: {"bind": "/home/orbit/.ssh", "mode": "ro"},
             },
             mem_limit="2g",
             cpu_quota=100000,  # 1 CPU
