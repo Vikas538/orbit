@@ -12,16 +12,15 @@ mkdir -p "$WRAPPER_DIR"
 cp "$GATE_SCRIPT" "$WRAPPER_DIR/orbit-gate"
 chmod +x "$WRAPPER_DIR/orbit-gate"
 
-# Commands that require user approval before running
+# Commands that require user approval before running.
+# git is intentionally excluded — agents need git freely for commits/push/branch.
+# curl/wget excluded from agent gate (entrypoint uses real binaries; agent HTTP calls are fine).
 GATED_COMMANDS=(
     pip pip3
     npm npx
     apt apt-get apt-cache
-    curl wget
     rm rmdir
-    git
     docker kubectl
-    ssh scp
     chmod chown
     sudo su
 )

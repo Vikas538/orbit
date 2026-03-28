@@ -70,6 +70,7 @@ def spin_up(session: OrbitSessions) -> tuple[str, str]:
         repo_url = f"https://github.com/{repo_url}"
 
     env.update({
+        "SESSION_ID": session.session_id or "",
         "TICKET_ID": session.ticket_id or "",
         "REPO_URL": repo_url,
         "MODEL_USED": session.model_used or "gemini",
