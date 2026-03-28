@@ -112,30 +112,64 @@ MCP_CONFIG_JSON='{
 }'
 
 # ── Run agent with gated PATH injected ───────────────────────────────────────
-# The orbit-gate wrappers only take effect inside this env — not in the steps above.
 echo "[ORBIT] ── Running agent ($MODEL_USED) ────────────────"
 FULL_PROMPT="Project README:\n${README}\n\n---\n\nTask:\n${TASK_PROMPT} Once changes are done, push to git and create a new branch named after the ticket ID."
 GATED_PATH="/usr/local/orbit/bin:${PATH}"
 
-case "$MODEL_USED" in
-    claude)
-        echo "$MCP_CONFIG_JSON" > /tmp/mcp_config.json
-        env PATH="$GATED_PATH" \
-            claude --print --dangerously-skip-permissions \
-                   --mcp-config /tmp/mcp_config.json \
-                   "$FULL_PROMPT" 2>&1 \
-        | python3 /container/agent_forwarder.py
-        ;;
-    gemini | *)
-        mkdir -p /home/orbit/.gemini
-        echo "$MCP_CONFIG_JSON" > /home/orbit/.gemini/settings.json
-        env PATH="$GATED_PATH" \
-            gemini --prompt "$FULL_PROMPT" \
-                   --include-directories "$REPO_DIR" \
-                   --approval-mode yolo 2>&1 \
-        | python3 /container/agent_forwarder.py
-        ;;
-esac
+run_agent() {
+    local prompt="$1"
+    local resume="${2:-false}"   # "true" = resume/continue previous session
+
+    (
+        curl -s -X POST "${WS_SERVER_URL}/internal/set_agent_pid" \
+             -H "Content-Type: application/json" \
+             -d "{\"pid\": $BASHPID}" || true
+
+        case "$MODEL_USED" in
+            claude)
+                echo "$MCP_CONFIG_JSON" > /tmp/mcp_config.json
+                if [ "$resume" = "true" ]; then
+                    # --continue resumes the most recent Claude session with full context
+                    # setsid makes the agent a new process-group leader so killpg wipes
+                    # out the agent AND all its child processes (tools, MCP servers, etc.)
+                    exec setsid stdbuf -oL env PATH="$GATED_PATH" \
+                        claude --continue --print --dangerously-skip-permissions \
+                               --mcp-config /tmp/mcp_config.json \
+                               "$prompt"
+                else
+                    exec setsid stdbuf -oL env PATH="$GATED_PATH" \
+                        claude --print --dangerously-skip-permissions \
+                               --mcp-config /tmp/mcp_config.json \
+                               "$prompt"
+                fi
+                ;;
+            gemini | *)
+                mkdir -p /home/orbit/.gemini
+                echo "$MCP_CONFIG_JSON" > /home/orbit/.gemini/settings.json
+                if [ "$resume" = "true" ]; then
+                    # --resume continues the last Gemini session with full context
+                    exec setsid stdbuf -oL env PATH="$GATED_PATH" \
+                        gemini --resume \
+                               --prompt "$prompt" \
+                               --include-directories "$REPO_DIR" \
+                               --approval-mode yolo
+                else
+                    exec setsid stdbuf -oL env PATH="$GATED_PATH" \
+                        gemini --prompt "$prompt" \
+                               --include-directories "$REPO_DIR" \
+                               --approval-mode yolo
+                fi
+                ;;
+        esac
+    ) 2>&1 | python3 -u /container/agent_forwarder.py
+
+    curl -s -X POST "${WS_SERVER_URL}/internal/set_agent_pid" \
+         -H "Content-Type: application/json" \
+         -d '{"pid": 0}' || true
+}
+
+# Initial task — fresh session
+run_agent "$FULL_PROMPT" "false"
 
 # ── Mark session as COMPLETED ─────────────────────────────────────────────────
 echo "[ORBIT] ── Marking $TICKET_ID as COMPLETED ─────────────"
@@ -202,22 +236,7 @@ while [ "$(date +%s)" -lt "$STANDBY_END" ]; do
              -H "Content-Type: application/json" \
              -d "{\"content\": \"Running follow-up: ${USER_MSG}\", \"source\": \"system\"}" || true
 
-        case "$MODEL_USED" in
-            claude)
-                env PATH="$GATED_PATH" \
-                    claude --print --dangerously-skip-permissions \
-                           --mcp-config /tmp/mcp_config.json \
-                           "$USER_MSG" 2>&1 \
-                | python3 /container/agent_forwarder.py
-                ;;
-            gemini | *)
-                env PATH="$GATED_PATH" \
-                    gemini --prompt "$USER_MSG" \
-                           --include-directories "$REPO_DIR" \
-                           --approval-mode yolo 2>&1 \
-                | python3 /container/agent_forwarder.py
-                ;;
-        esac
+        run_agent "$USER_MSG" "true"
     else
         sleep 3
     fi

@@ -160,6 +160,50 @@ async def push_chat(payload: ChatLine) -> dict:
     return {"status": "ok"}
 
 
+class AgentPid(BaseModel):
+    pid: int
+
+
+_agent_pid: Optional[int] = None
+
+
+@app.post("/internal/set_agent_pid")
+async def set_agent_pid(payload: AgentPid) -> dict:
+    """Called by entrypoint.sh whenever a new agent process starts."""
+    global _agent_pid
+    _agent_pid = payload.pid
+    return {"status": "ok", "pid": _agent_pid}
+
+
+@app.post("/internal/stop_agent")
+async def stop_agent() -> dict:
+    """Kill the agent process group — SIGTERM then SIGKILL after 3s.
+
+    The agent runs under setsid so it is its own process-group leader.
+    Sending to the process group (killpg) kills the agent AND all children
+    (bash tool subprocesses, MCP servers, etc.) in one shot.
+    """
+    global _agent_pid
+    if not _agent_pid:
+        return {"status": "no_agent"}
+    import os as _os, signal as _signal
+    pid = _agent_pid
+    try:
+        pgid = _os.getpgid(pid)
+        _os.killpg(pgid, _signal.SIGTERM)
+        await asyncio.sleep(3)
+        try:
+            _os.killpg(pgid, _signal.SIGKILL)  # force-kill survivors
+        except (ProcessLookupError, PermissionError):
+            pass  # group already gone after SIGTERM — good
+        await chat_mgr.broadcast({"type": "system", "content": "Agent stopped by user.", "timestamp": _now()})
+        _agent_pid = None
+        return {"status": "stopped"}
+    except (ProcessLookupError, PermissionError):
+        _agent_pid = None
+        return {"status": "already_exited"}
+
+
 @app.get("/internal/next_user_message")
 async def next_user_message() -> dict:
     """
