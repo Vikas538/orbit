@@ -15,6 +15,7 @@ from sqlalchemy.sql import func
 from app.database import Base
 from enum import Enum
 from cuid import cuid
+from datetime import datetime, timezone
 
 
 class OrbitTicketStatus(str, Enum):
@@ -43,6 +44,9 @@ class OrbitSessions(Base):
     status = Column(String, nullable=True)
     container_name = Column(String, nullable=True)
     container_id = Column(String, nullable=True)
+    ws_url = Column(String, nullable=True)
+    task_arn = Column(String, nullable=True)
+    started_at = Column(DateTime(timezone=True), nullable=True, server_default=func.now())
 
 
     def to_dict(self):

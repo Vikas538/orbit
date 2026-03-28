@@ -14,6 +14,18 @@ class SessionDAO:
             )
             return result.scalar_one_or_none()
 
+    async def get_by_session_id(self, session_id: str) -> OrbitSessions | None:
+        async with db.get_async_session() as session:
+            result = await session.execute(
+                select(OrbitSessions).where(OrbitSessions.session_id == session_id)
+            )
+            return result.scalar_one_or_none()
+
+    async def get_all(self) -> list[OrbitSessions]:
+        async with db.get_async_session() as session:
+            result = await session.execute(select(OrbitSessions))
+            return list(result.scalars().all())
+
     async def create(self, ticket_id: str, **kwargs) -> OrbitSessions:
         async with db.get_async_session() as session:
             record = OrbitSessions(ticket_id=ticket_id, **kwargs)

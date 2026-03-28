@@ -33,8 +33,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN npm install -g --no-fund --no-audit @google/gemini-cli @anthropic-ai/claude-code \
     && npm cache clean --force
 
-# Install orbit MCP tool dependencies
-RUN pip install --no-cache-dir mcp httpx
+# Install orbit MCP tool dependencies + ws_server/watcher/heartbeat deps + supervisord
+RUN pip install --no-cache-dir mcp httpx fastapi "uvicorn[standard]" watchdog supervisor
 
 RUN ssh-keyscan github.com >> /etc/ssh/ssh_known_hosts
 
@@ -45,9 +45,29 @@ RUN chown orbit:orbit /workspace
 
 COPY guardrails/CLAUDE.md /guardrails/CLAUDE.md
 COPY guardrails/GEMINI.md /guardrails/GEMINI.md
-COPY orbit-tools/mcp_server.py /orbit-tools/mcp_server.py
-COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh && chmod +x /orbit-tools/mcp_server.py
+
+# MCP tools
+COPY orbit-tools/mcp_server.py     /orbit-tools/mcp_server.py
+COPY orbit-tools/permission_gate.py /orbit-tools/permission_gate.py
+
+# Container runtime scripts
+COPY container/ws_server.py        /container/ws_server.py
+COPY container/file_watcher.py     /container/file_watcher.py
+COPY container/heartbeat.py        /container/heartbeat.py
+COPY container/agent_forwarder.py  /container/agent_forwarder.py
+COPY container/supervisord.conf    /container/supervisord.conf
+
+# Install orbit-gate wrappers (must run as root before USER switch)
+COPY container/orbit_wrappers /container/orbit_wrappers
+RUN bash /container/orbit_wrappers/install_wrappers.sh
+
+COPY container/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh \
+    && chmod +x /orbit-tools/mcp_server.py \
+    && chmod +x /orbit-tools/permission_gate.py
+
+# Prepend wrapper dir so gated commands shadow system binaries
+ENV PATH="/usr/local/orbit/bin:$PATH"
 
 USER orbit
 

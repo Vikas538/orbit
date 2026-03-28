@@ -7,3 +7,4 @@ pydantic-settings
 cuid
 chromadb
 fastmcp
+google-generativeai
