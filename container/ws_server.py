@@ -7,13 +7,12 @@ agent_forwarder, and permission_gate (all co-located in the same container).
 """
 
 import asyncio
-import json
 import os
 from datetime import datetime, timezone
-from typing import Dict, Set
+from typing import Dict, Optional, Set
 
 import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -58,12 +57,17 @@ diff_mgr  = ConnectionManager("diff")
 perms_mgr = ConnectionManager("perms")
 
 
-# ── Permission state (keyed by permission_id) ─────────────────────────────────
+# ── State ─────────────────────────────────────────────────────────────────────
 
-# pending: requests waiting for user action, broadcast immediately to new clients
+# Latest diff per file — replayed to any new /ws/diff connection
+current_diffs: Dict[str, dict] = {}
+
+# Pending permission requests — replayed to new /ws/perms connections
 pending_permissions: Dict[str, dict] = {}
-# responses: resolved entries, consumed by permission_gate poll
 permission_responses: Dict[str, dict] = {}
+
+# Queue of user chat messages waiting to be picked up by the standby agent loop
+_chat_queue: asyncio.Queue = asyncio.Queue()
 
 
 # ── WebSocket endpoints ───────────────────────────────────────────────────────
@@ -74,15 +78,14 @@ async def ws_chat(ws: WebSocket) -> None:
     try:
         while True:
             data = await ws.receive_json()
-            # Broadcast user messages to all chat clients
-            await chat_mgr.broadcast({
-                "type": "user_message",
-                "content": data.get("content", ""),
-                "timestamp": _now(),
-            })
-    except WebSocketDisconnect:
-        chat_mgr.disconnect(ws)
-    except Exception:
+            content = data.get("content", "").strip()
+            if not content:
+                continue
+            msg = {"type": "user_message", "content": content, "timestamp": _now()}
+            await chat_mgr.broadcast(msg)
+            # Also enqueue for the standby agent loop in entrypoint.sh
+            await _chat_queue.put(content)
+    except (WebSocketDisconnect, Exception):
         chat_mgr.disconnect(ws)
 
 
@@ -91,29 +94,30 @@ async def ws_plan(ws: WebSocket) -> None:
     await plan_mgr.connect(ws)
     try:
         while True:
-            await ws.receive_text()  # keep-alive reads
-    except WebSocketDisconnect:
-        plan_mgr.disconnect(ws)
-    except Exception:
+            await ws.receive_text()
+    except (WebSocketDisconnect, Exception):
         plan_mgr.disconnect(ws)
 
 
 @app.websocket("/ws/diff")
 async def ws_diff(ws: WebSocket) -> None:
     await diff_mgr.connect(ws)
+    # Replay all currently known diffs so late-joining clients see everything
+    for diff in list(current_diffs.values()):
+        try:
+            await ws.send_json(diff)
+        except Exception:
+            break
     try:
         while True:
             await ws.receive_text()
-    except WebSocketDisconnect:
-        diff_mgr.disconnect(ws)
-    except Exception:
+    except (WebSocketDisconnect, Exception):
         diff_mgr.disconnect(ws)
 
 
 @app.websocket("/ws/perms")
 async def ws_perms(ws: WebSocket) -> None:
     await perms_mgr.connect(ws)
-    # Replay any already-pending permissions to the new client
     for perm in list(pending_permissions.values()):
         try:
             await ws.send_json(perm)
@@ -122,7 +126,6 @@ async def ws_perms(ws: WebSocket) -> None:
     try:
         while True:
             data = await ws.receive_json()
-            # Dashboard sends: {"permission_id": "...", "granted": true/false}
             perm_id = data.get("permission_id")
             granted = bool(data.get("granted", False))
             if perm_id and perm_id in pending_permissions:
@@ -131,28 +134,24 @@ async def ws_perms(ws: WebSocket) -> None:
                     "reason": "user approved" if granted else "user denied",
                 }
                 del pending_permissions[perm_id]
-                # Ack to all perms clients so the panel clears
                 await perms_mgr.broadcast({
                     "type": "permission_resolved",
                     "permission_id": perm_id,
                     "granted": granted,
                 })
-    except WebSocketDisconnect:
-        perms_mgr.disconnect(ws)
-    except Exception:
+    except (WebSocketDisconnect, Exception):
         perms_mgr.disconnect(ws)
 
 
-# ── Internal HTTP endpoints (used by co-located processes) ────────────────────
+# ── Internal HTTP endpoints ───────────────────────────────────────────────────
 
 class ChatLine(BaseModel):
     content: str
-    source: str = "agent"  # "agent" | "system"
+    source: str = "agent"
 
 
 @app.post("/internal/push_chat")
 async def push_chat(payload: ChatLine) -> dict:
-    """Called by agent_forwarder to stream agent output to dashboard."""
     await chat_mgr.broadcast({
         "type": payload.source,
         "content": payload.content,
@@ -161,14 +160,26 @@ async def push_chat(payload: ChatLine) -> dict:
     return {"status": "ok"}
 
 
+@app.get("/internal/next_user_message")
+async def next_user_message() -> dict:
+    """
+    Polled by the standby loop in entrypoint.sh.
+    Returns the next queued user chat message or null if none pending.
+    """
+    try:
+        msg = _chat_queue.get_nowait()
+        return {"message": msg}
+    except asyncio.QueueEmpty:
+        return {"message": None}
+
+
 class PlanMessage(BaseModel):
     content: str
-    msg_type: str = "system"  # "system" | "plan" | "heartbeat"
+    msg_type: str = "system"
 
 
 @app.post("/internal/push_plan")
 async def push_plan(payload: PlanMessage) -> dict:
-    """Called by heartbeat and MCP save_plan to update the plan panel."""
     await plan_mgr.broadcast({
         "type": payload.msg_type,
         "content": payload.content,
@@ -184,13 +195,14 @@ class DiffPayload(BaseModel):
 
 @app.post("/internal/push_diff")
 async def push_diff(payload: DiffPayload) -> dict:
-    """Called by file_watcher on every file change."""
-    await diff_mgr.broadcast({
+    msg = {
         "type": "diff",
         "file": payload.file,
         "patch": payload.patch,
         "timestamp": _now(),
-    })
+    }
+    current_diffs[payload.file] = msg   # cache so late joiners see it
+    await diff_mgr.broadcast(msg)
     return {"status": "ok"}
 
 
@@ -204,7 +216,6 @@ class PermissionRequestPayload(BaseModel):
 
 @app.post("/internal/permission_request")
 async def create_permission_request(req: PermissionRequestPayload) -> dict:
-    """Called by permission_gate MCP tool when agent needs user approval."""
     payload = {
         "type": "permission_request",
         "id": req.id,
@@ -221,7 +232,6 @@ async def create_permission_request(req: PermissionRequestPayload) -> dict:
 
 @app.get("/internal/permission_status/{permission_id}")
 async def get_permission_status(permission_id: str) -> dict:
-    """Polled by permission_gate until user responds or timeout."""
     if permission_id in permission_responses:
         result = permission_responses.pop(permission_id)
         return {"status": "resolved", **result}
@@ -241,6 +251,7 @@ async def health() -> dict:
             "perms": len(perms_mgr.active),
         },
         "pending_permissions": len(pending_permissions),
+        "cached_diffs": len(current_diffs),
     }
 
 

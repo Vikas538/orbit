@@ -144,18 +144,84 @@ curl -s -X POST "${ORBIT_BASE_URL}/agent/complete" \
      -d "{\"ticket_id\": \"$TICKET_ID\"}" \
      || echo "[ORBIT] WARNING: could not update status to COMPLETED"
 
-# Notify dashboard that agent is done
-curl -s -X POST "${WS_SERVER_URL}/internal/push_plan" \
-     -H "Content-Type: application/json" \
-     -d "{\"content\": \"Agent finished. Container stays alive for ${POST_TASK_HOLD:-1800}s for review.\", \"msg_type\": \"system\"}" \
-     || true
-
 echo "[ORBIT] ── Done: $TICKET_ID ─────────────────────────────"
 
-# Keep ws_server + file_watcher alive so dashboard can review diffs after task ends.
-# Defaults to 30 minutes. Override with POST_TASK_HOLD env var (seconds).
-HOLD="${POST_TASK_HOLD:-1800}"
-echo "[ORBIT] Holding container alive for ${HOLD}s (set POST_TASK_HOLD to change)..."
-sleep "$HOLD"
+# ── Push full repo diff so dashboard diff viewer shows everything ─────────────
+echo "[ORBIT] Pushing full diff snapshot to dashboard..."
+cd "$REPO_DIR"
+git diff HEAD 2>/dev/null | python3 - <<'PYEOF'
+import sys, re, json, urllib.request, os
 
+ws = os.environ.get("WS_SERVER_URL", "http://localhost:8001")
+full_diff = sys.stdin.read()
+
+# Split unified diff into per-file chunks
+chunks = re.split(r'(?=^diff --git )', full_diff, flags=re.MULTILINE)
+for chunk in chunks:
+    if not chunk.strip():
+        continue
+    m = re.search(r'^diff --git a/.+ b/(.+)$', chunk, re.MULTILINE)
+    filename = m.group(1) if m else "unknown"
+    body = json.dumps({"file": filename, "patch": chunk}).encode()
+    req = urllib.request.Request(
+        f"{ws}/internal/push_diff",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        urllib.request.urlopen(req, timeout=5)
+    except Exception as e:
+        print(f"[ORBIT] push_diff failed for {filename}: {e}", file=sys.stderr)
+PYEOF
+
+# ── Standby loop — agent stays responsive to new dashboard prompts ────────────
+# Polls ws_server for user chat messages, re-runs agent on each one.
+# Runs for POST_TASK_HOLD seconds (default 30 min) then container exits.
+HOLD="${POST_TASK_HOLD:-1800}"
+STANDBY_END=$(( $(date +%s) + HOLD ))
+
+curl -s -X POST "${WS_SERVER_URL}/internal/push_plan" \
+     -H "Content-Type: application/json" \
+     -d "{\"content\": \"[STANDBY] Agent is ready for follow-up prompts via Terminal chat for ${HOLD}s.\", \"msg_type\": \"system\"}" \
+     || true
+curl -s -X POST "${WS_SERVER_URL}/internal/push_chat" \
+     -H "Content-Type: application/json" \
+     -d "{\"content\": \"Task complete. You can send follow-up prompts below.\", \"source\": \"system\"}" \
+     || true
+
+echo "[ORBIT] Standby mode — waiting for follow-up prompts for ${HOLD}s..."
+
+while [ "$(date +%s)" -lt "$STANDBY_END" ]; do
+    RESPONSE=$(curl -sf "${WS_SERVER_URL}/internal/next_user_message" 2>/dev/null || echo '{"message":null}')
+    USER_MSG=$(python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print(d.get('message') or '')" <<< "$RESPONSE" 2>/dev/null || echo "")
+
+    if [ -n "$USER_MSG" ]; then
+        echo "[ORBIT] Follow-up prompt received: ${USER_MSG}"
+        curl -s -X POST "${WS_SERVER_URL}/internal/push_chat" \
+             -H "Content-Type: application/json" \
+             -d "{\"content\": \"Running follow-up: ${USER_MSG}\", \"source\": \"system\"}" || true
+
+        case "$MODEL_USED" in
+            claude)
+                env PATH="$GATED_PATH" \
+                    claude --print --dangerously-skip-permissions \
+                           --mcp-config /tmp/mcp_config.json \
+                           "$USER_MSG" 2>&1 \
+                | python3 /container/agent_forwarder.py
+                ;;
+            gemini | *)
+                env PATH="$GATED_PATH" \
+                    gemini --prompt "$USER_MSG" \
+                           --include-directories "$REPO_DIR" \
+                           --approval-mode yolo 2>&1 \
+                | python3 /container/agent_forwarder.py
+                ;;
+        esac
+    else
+        sleep 3
+    fi
+done
+
+echo "[ORBIT] Standby period ended — shutting down."
 kill $SUPERVISORD_PID 2>/dev/null || true
