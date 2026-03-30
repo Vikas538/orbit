@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+sqlalchemy[asyncio]
+asyncpg
+apscheduler
+pydantic-settings
+cuid
+chromadb
+fastmcp
+google-generativeai

@@ -1,0 +1,114 @@
+#!/usr/bin/env python3
+"""
+Drop-in wrapper for dangerous commands (pip, npm, apt, apt-get, curl, wget, rm, etc.)
+Placed early in PATH so it shadows system binaries.
+
+Flow:
+  1. Calls ws_server /internal/permission_request with the exact command
+  2. Polls until user Allow/Deny (max 5 min) — same logic as permission_gate MCP tool
+  3. If granted: exec the real command
+  4. If denied/timeout: print error and exit 1
+
+Usage (via symlinks):
+  /usr/local/orbit/bin/pip   -> orbit-gate
+  /usr/local/orbit/bin/npm   -> orbit-gate
+  /usr/local/orbit/bin/apt   -> orbit-gate
+  /usr/local/orbit/bin/curl  -> orbit-gate
+  ...etc
+"""
+
+import json
+import os
+import sys
+import time
+import subprocess
+
+import httpx
+
+WS_SERVER   = os.environ.get("WS_SERVER_URL", "http://localhost:8001")
+SESSION_ID  = os.environ.get("SESSION_ID", "unknown")
+TIMEOUT     = int(os.environ.get("ORBIT_PERM_TIMEOUT", "300"))  # 5 min
+POLL_SECS   = 2
+
+# The command name is the name of this symlink
+cmd_name = os.path.basename(sys.argv[0])
+cmd_args = sys.argv[1:]
+full_cmd = " ".join([cmd_name] + cmd_args)
+
+# Resolve the real binary (skip our own wrappers dir)
+def find_real_binary(name: str) -> str | None:
+    wrapper_dir = os.path.dirname(os.path.abspath(__file__))
+    for d in os.environ.get("PATH", "").split(":"):
+        if os.path.abspath(d) == wrapper_dir:
+            continue
+        candidate = os.path.join(d, name)
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
+def request_permission(perm_id: str) -> bool:
+    """Register with ws_server and poll for user decision. Returns True if granted."""
+    try:
+        httpx.post(
+            f"{WS_SERVER}/internal/permission_request",
+            json={
+                "id":         perm_id,
+                "action":     "run_command",
+                "command":    full_cmd,
+                "reason":     f"Agent invoked '{cmd_name}' directly (no MCP call)",
+                "session_id": SESSION_ID,
+            },
+            timeout=10,
+        )
+    except Exception as e:
+        print(f"[ORBIT-GATE] ws_server unreachable: {e}. Blocking '{full_cmd}'.", file=sys.stderr)
+        return False
+
+    deadline = time.monotonic() + TIMEOUT
+    while time.monotonic() < deadline:
+        time.sleep(POLL_SECS)
+        try:
+            resp = httpx.get(f"{WS_SERVER}/internal/permission_status/{perm_id}", timeout=5)
+            data = resp.json()
+            if data.get("status") == "resolved":
+                return bool(data.get("granted", False))
+            if data.get("status") == "not_found":
+                return False
+        except Exception:
+            pass
+
+    # Auto-deny on timeout
+    print(f"[ORBIT-GATE] Timeout waiting for permission — blocking '{full_cmd}'.", file=sys.stderr)
+    return False
+
+
+def main() -> None:
+    import uuid
+    perm_id = str(uuid.uuid4())
+
+    print(
+        f"\n[ORBIT-GATE] ⚠  '{full_cmd}' requires user approval.\n"
+        f"[ORBIT-GATE] Waiting for dashboard response (up to {TIMEOUT}s)...\n",
+        file=sys.stderr,
+    )
+
+    granted = request_permission(perm_id)
+
+    if not granted:
+        print(f"[ORBIT-GATE] ✗  Permission denied for: {full_cmd}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"[ORBIT-GATE] ✓  Permission granted — executing: {full_cmd}", file=sys.stderr)
+
+    real_bin = find_real_binary(cmd_name)
+    if not real_bin:
+        print(f"[ORBIT-GATE] ERROR: Real binary '{cmd_name}' not found in PATH.", file=sys.stderr)
+        sys.exit(127)
+
+    # Replace current process with the real command
+    os.execv(real_bin, [real_bin] + cmd_args)
+
+
+if __name__ == "__main__":
+    main()

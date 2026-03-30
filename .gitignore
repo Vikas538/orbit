@@ -1,4 +1,8 @@
 .env
 __pycache__
 index.html
-main.py
+ongoing.json
+pending.json
+done.json
+current_task.json
+hello_world_generated.py
