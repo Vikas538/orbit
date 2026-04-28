@@ -7,51 +7,13 @@ import subprocess
 from fastapi import FastAPI
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-# --- CONFIG ---
-PENDING_FILE = "pending.json"
-ONGOING_FILE = "ongoing.json"
-DONE_FILE = "done.json"
+from app.utils import (
+    read_json, write_json, get_ongoing, set_ongoing, 
+    clear_ongoing, init_files, PENDING_FILE, ONGOING_FILE, DONE_FILE
+)
+
 POLL_INTERVAL_SECS = 10
 TASK_TIMEOUT_MINS = 10
-
-# --- FILE HELPERS ---
-
-def read_json(filepath):
-    if not os.path.exists(filepath):
-        return []
-    with open(filepath, "r") as f:
-        content = f.read().strip()
-        if not content or content == "{}":
-            return []
-        return json.loads(content)
-
-def write_json(filepath, data):
-    with open(filepath, "w") as f:
-        json.dump(data, f, indent=2)
-
-def get_ongoing():
-    if not os.path.exists(ONGOING_FILE):
-        return None
-    with open(ONGOING_FILE, "r") as f:
-        content = f.read().strip()
-        if not content or content == "{}":
-            return None
-        return json.loads(content)
-
-def set_ongoing(task):
-    with open(ONGOING_FILE, "w") as f:
-        json.dump(task, f, indent=2)
-
-def clear_ongoing():
-    with open(ONGOING_FILE, "w") as f:
-        json.dump({}, f, indent=2)
-
-def init_files():
-    for f in [PENDING_FILE, DONE_FILE]:
-        if not os.path.exists(f):
-            write_json(f, [])
-    if not os.path.exists(ONGOING_FILE):
-        clear_ongoing()
 
 # --- WATCHER LOGIC ---
 

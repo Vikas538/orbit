@@ -5,7 +5,7 @@ from fastapi import APIRouter, Request
 from app.chroma import get_collection
 from app.dao.session_dao import session_dao
 from app.services import container_service
-from main import read_json, write_json
+from app.utils import read_json, write_json
 
 router = APIRouter(tags=["webhook"])
 
